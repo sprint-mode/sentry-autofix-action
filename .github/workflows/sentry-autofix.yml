@@ -63,7 +63,7 @@ jobs:
             echo "sentry_url=${INPUT_URL}" >> "$GITHUB_OUTPUT"
             echo "issue_number=${ISSUE_NUMBER}" >> "$GITHUB_OUTPUT"
           elif [ -n "$ISSUE_BODY" ]; then
-            SENTRY_URL=$(echo "$ISSUE_BODY" | grep -oP 'https://[^\s]*sentry[^\s]*issues/[0-9]+' | head -1 || echo "")
+            SENTRY_URL=$(echo "$ISSUE_BODY" | grep -oE 'https://[a-zA-Z0-9._-]*sentry[a-zA-Z0-9./_-]*issues/[0-9]+' | head -1 || echo "")
             echo "sentry_url=${SENTRY_URL}" >> "$GITHUB_OUTPUT"
             echo "issue_number=${ISSUE_NUMBER}" >> "$GITHUB_OUTPUT"
           else
@@ -72,13 +72,16 @@ jobs:
           fi
 
       - name: Validate Sentry URL
+        env:
+          SENTRY_URL: ${{ steps.extract.outputs.sentry_url }}
+          ISSUE_NUMBER: ${{ steps.extract.outputs.issue_number }}
         run: |
-          if [ -z "${{ steps.extract.outputs.sentry_url }}" ]; then
+          if [ -z "$SENTRY_URL" ]; then
             echo "::error::Could not extract Sentry issue URL."
             exit 1
           fi
-          echo "Sentry URL: ${{ steps.extract.outputs.sentry_url }}"
-          echo "GitHub Issue: ${{ steps.extract.outputs.issue_number }}"
+          echo "Sentry URL: $SENTRY_URL"
+          echo "GitHub Issue: $ISSUE_NUMBER"
 
       - name: Create Sentry MCP config
         env:
@@ -114,28 +117,31 @@ jobs:
             exit 1
           fi
 
-          PROMPT=$(echo "$PROMPT" | sed \
+          PROMPT=$(printf '%s' "$PROMPT" | sed \
             -e "s|{{SENTRY_URL}}|${SENTRY_URL}|g" \
             -e "s|{{GITHUB_ISSUE_NUMBER}}|${ISSUE_NUMBER}|g" \
             -e "s|{{SEVERITY_FILTER}}|${SEVERITY_FILTER}|g" \
             -e "s|{{BASE_BRANCH}}|${BASE_BRANCH}|g")
 
-          echo "$PROMPT" > /tmp/autofix-prompt.md
-          echo "Prompt built successfully ($(wc -l < /tmp/autofix-prompt.md) lines)"
+          {
+            echo "content<<PROMPT_EOF"
+            echo "$PROMPT"
+            echo "PROMPT_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Run Claude Auto-Fix
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          prompt_file: /tmp/autofix-prompt.md
+          prompt: ${{ steps.prompt.outputs.content }}
           claude_args: |
             --mcp-config /tmp/mcp-config.json
             --max-turns ${{ inputs.max_turns }}
             --model ${{ inputs.model }}
 
       - name: Notify Slack
-        if: always() && secrets.SLACK_WEBHOOK_URL != ''
+        if: always() && env.SLACK_WEBHOOK_URL != ''
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SENTRY_URL: ${{ steps.extract.outputs.sentry_url }}
