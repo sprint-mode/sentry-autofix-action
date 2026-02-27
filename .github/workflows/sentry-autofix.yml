@@ -1,0 +1,173 @@
+name: Sentry Auto-Fix
+
+on:
+  workflow_call:
+    inputs:
+      sentry_issue_url:
+        description: 'Sentry issue URL (for manual/workflow_dispatch trigger)'
+        required: false
+        type: string
+        default: ''
+      severity_filter:
+        description: 'Comma-separated severity levels to auto-fix (fatal,error,warning,info)'
+        required: false
+        type: string
+        default: 'fatal,error'
+      max_turns:
+        description: 'Max Claude conversation turns (higher = more complex fixes)'
+        required: false
+        type: number
+        default: 30
+      base_branch:
+        description: 'Base branch to create fix branch from'
+        required: false
+        type: string
+        default: 'main'
+      model:
+        description: 'Claude model to use'
+        required: false
+        type: string
+        default: 'claude-sonnet-4-6-20250514'
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+      SENTRY_AUTH_TOKEN:
+        required: true
+      SLACK_WEBHOOK_URL:
+        required: false
+
+jobs:
+  autofix:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base_branch }}
+          fetch-depth: 0
+
+      - name: Extract Sentry issue info
+        id: extract
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_URL: ${{ inputs.sentry_issue_url }}
+          ISSUE_BODY: ${{ github.event.issue.body || '' }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || '' }}
+        run: |
+          if [ -n "$INPUT_URL" ]; then
+            echo "sentry_url=${INPUT_URL}" >> "$GITHUB_OUTPUT"
+            echo "issue_number=${ISSUE_NUMBER}" >> "$GITHUB_OUTPUT"
+          elif [ -n "$ISSUE_BODY" ]; then
+            SENTRY_URL=$(echo "$ISSUE_BODY" | grep -oP 'https://[^\s]*sentry[^\s]*issues/[0-9]+' | head -1 || echo "")
+            echo "sentry_url=${SENTRY_URL}" >> "$GITHUB_OUTPUT"
+            echo "issue_number=${ISSUE_NUMBER}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::No Sentry issue URL found. Provide via input or GitHub issue body."
+            exit 1
+          fi
+
+      - name: Validate Sentry URL
+        run: |
+          if [ -z "${{ steps.extract.outputs.sentry_url }}" ]; then
+            echo "::error::Could not extract Sentry issue URL."
+            exit 1
+          fi
+          echo "Sentry URL: ${{ steps.extract.outputs.sentry_url }}"
+          echo "GitHub Issue: ${{ steps.extract.outputs.issue_number }}"
+
+      - name: Create Sentry MCP config
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: |
+          cat > /tmp/mcp-config.json << MCPEOF
+          {
+            "mcpServers": {
+              "sentry": {
+                "command": "npx",
+                "args": ["-y", "@sentry/mcp-server"],
+                "env": {
+                  "SENTRY_AUTH_TOKEN": "${SENTRY_AUTH_TOKEN}"
+                }
+              }
+            }
+          }
+          MCPEOF
+
+      - name: Build prompt from template
+        id: prompt
+        env:
+          SENTRY_URL: ${{ steps.extract.outputs.sentry_url }}
+          ISSUE_NUMBER: ${{ steps.extract.outputs.issue_number }}
+          SEVERITY_FILTER: ${{ inputs.severity_filter }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+        run: |
+          PROMPT_URL="https://raw.githubusercontent.com/sprint-mode/sentry-autofix-action/main/prompts/autofix-prompt.md"
+          PROMPT=$(curl -sf "$PROMPT_URL" || echo "")
+
+          if [ -z "$PROMPT" ]; then
+            echo "::error::Could not load prompt template from $PROMPT_URL"
+            exit 1
+          fi
+
+          PROMPT=$(echo "$PROMPT" | sed \
+            -e "s|{{SENTRY_URL}}|${SENTRY_URL}|g" \
+            -e "s|{{GITHUB_ISSUE_NUMBER}}|${ISSUE_NUMBER}|g" \
+            -e "s|{{SEVERITY_FILTER}}|${SEVERITY_FILTER}|g" \
+            -e "s|{{BASE_BRANCH}}|${BASE_BRANCH}|g")
+
+          echo "$PROMPT" > /tmp/autofix-prompt.md
+          echo "Prompt built successfully ($(wc -l < /tmp/autofix-prompt.md) lines)"
+
+      - name: Run Claude Auto-Fix
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt_file: /tmp/autofix-prompt.md
+          claude_args: |
+            --mcp-config /tmp/mcp-config.json
+            --max-turns ${{ inputs.max_turns }}
+            --model ${{ inputs.model }}
+
+      - name: Notify Slack
+        if: always() && secrets.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SENTRY_URL: ${{ steps.extract.outputs.sentry_url }}
+          ISSUE_NUMBER: ${{ steps.extract.outputs.issue_number }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CONCLUSION: ${{ job.status }}
+        run: |
+          if [ "$CONCLUSION" = "success" ]; then
+            EMOJI="✅"
+            STATUS="Auto-fix PR created"
+          else
+            EMOJI="❌"
+            STATUS="Auto-fix failed"
+          fi
+
+          PAYLOAD=$(cat <<SLACKEOF
+          {
+            "text": "${EMOJI} *${STATUS}* for Sentry issue",
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "${EMOJI} *${STATUS}*\n*Repo:* <https://github.com/${REPO}|${REPO}>\n*Sentry:* <${SENTRY_URL}|View Issue>\n*Run:* <${RUN_URL}|View Logs>"
+                }
+              }
+            ]
+          }
+          SLACKEOF
+          )
+
+          curl -sf -X POST -H 'Content-type: application/json' \
+            --data "$PAYLOAD" \
+            "$SLACK_WEBHOOK_URL" || echo "::warning::Slack notification failed"
