@@ -1,0 +1,38 @@
+# Copy this file to .github/workflows/sentry-autofix.yml in your repo
+#
+# Prerequisites:
+#   1. Set up Sentry-GitHub integration (https://sentry.io/integrations/github/)
+#   2. Create a Sentry Alert Rule that creates GitHub Issues with label "sentry"
+#   3. Add repo secrets: ANTHROPIC_API_KEY, SENTRY_AUTH_TOKEN
+#   4. (Optional) Add SLACK_AUTOFIX_WEBHOOK secret for Slack notifications
+#
+# Triggers:
+#   - Automatic: Sentry creates a GitHub Issue with label "sentry"
+#   - Manual: Run from Actions tab with a Sentry issue URL
+
+name: Sentry Auto-Fix
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      sentry_issue_url:
+        description: 'Sentry issue URL (e.g., https://your-org.sentry.io/issues/12345/)'
+        required: true
+        type: string
+
+jobs:
+  autofix:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.issue.labels.*.name, 'sentry')
+    uses: sprint-mode/sentry-autofix-action/.github/workflows/sentry-autofix.yml@main
+    with:
+      sentry_issue_url: ${{ inputs.sentry_issue_url || '' }}
+      severity_filter: 'fatal,error'
+      base_branch: 'main'
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_AUTOFIX_WEBHOOK }}
