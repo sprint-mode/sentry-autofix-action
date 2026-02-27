@@ -81,13 +81,40 @@ gh workflow run sentry-autofix.yml \
 
 ## Auto-Setup with Claude Code
 
-If you use [Claude Code](https://claude.ai/claude-code), copy the `skills/setup-sentry-autofix.md` skill to your Claude Code skills directory. Then run:
+If you use [Claude Code](https://claude.ai/claude-code), you can set up everything automatically with a single command.
+
+### Install the skill
+
+```bash
+# From your project's root directory:
+mkdir -p .claude/skills
+curl -o .claude/skills/setup-sentry-autofix.md \
+  https://raw.githubusercontent.com/sprint-mode/sentry-autofix-action/main/skills/setup-sentry-autofix.md
+```
+
+### Run it
+
+Open Claude Code in your repo and type:
 
 ```
 /setup-sentry-autofix
 ```
 
-Claude will create the workflow, check secrets, and guide you through Sentry configuration.
+Claude will:
+1. Create the `.github/workflows/sentry-autofix.yml` workflow
+2. Check which secrets you have and guide you to create the missing ones
+3. Walk you through the Sentry Alert Rule configuration
+4. Offer to run a manual test with a real Sentry issue
+
+### What secrets does it need?
+
+| Secret | Required | What it does | Cost |
+|--------|----------|-------------|------|
+| `ANTHROPIC_API_KEY` | Yes | Authenticates Claude Code with the Anthropic API | ~$0.50–$5 per auto-fix run |
+| `SENTRY_AUTH_TOKEN` | Yes | Lets Claude read your Sentry issues and stacktraces | Free (Sentry API) |
+| `SLACK_AUTOFIX_WEBHOOK` | No | Sends Slack notifications when PRs are created | Free |
+
+Get your Anthropic API key at [console.anthropic.com](https://console.anthropic.com/) and your Sentry token at [sentry.io/settings/auth-tokens](https://sentry.io/settings/auth-tokens/) (scopes: `project:read`, `event:read`, `issue:read`).
 
 ## Documentation
 
