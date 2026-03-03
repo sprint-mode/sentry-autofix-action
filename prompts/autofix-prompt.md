@@ -23,12 +23,50 @@ Use the Sentry MCP tools to retrieve:
 1. If there is a linked GitHub issue (#{{GITHUB_ISSUE_NUMBER}}), comment: "Skipped auto-fix: severity `<level>` is not in the filter `{{SEVERITY_FILTER}}`."
 2. Stop. Do not proceed.
 
-### Step 2: Diagnose the root cause
+### Step 2: Diagnose the root cause (Systematic Debugging)
 
-- Read the files referenced in the stacktrace, starting from the top of the stack (your code, not library code)
-- Trace the execution flow that caused the error
-- Identify the **root cause**, not just the surface error
-- Check git blame for recent changes to the affected code — the bug may be a recent regression
+**Iron law: NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST.**
+Do not propose fixes, do not write code, do not create branches until you complete Phase 3 below.
+
+#### Phase 1: Root Cause Investigation
+
+1. **Read error messages completely**
+   - Read the full stacktrace from the Sentry event — every frame, not just the top
+   - Note exact line numbers, file paths, error types, and error messages
+   - Read breadcrumbs for the sequence of actions that led to the error
+
+2. **Read the source code**
+   - Read every file referenced in the stacktrace (your code, not library code)
+   - Start from the top of the stack and work down
+   - Understand what each function is supposed to do
+
+3. **Trace data flow backward**
+   - Where does the bad value originate? Follow it backward through the call chain
+   - What called the failing function with the bad input?
+   - Keep tracing up until you find the original source — fix at source, not at symptom
+
+4. **Check recent changes**
+   - Run `git log --oneline -20` on the affected files
+   - Run `git blame` on the specific lines in the stacktrace
+   - Look for recent regressions: new dependencies, config changes, refactors
+
+5. **Multi-component systems**
+   - If the error crosses component boundaries (API → service → database, worker → queue → handler),
+     identify which boundary the failure occurs at
+   - Check what data enters and exits each component
+
+#### Phase 2: Pattern Analysis
+
+1. **Find working examples** — locate similar working code in the same codebase
+2. **Compare working vs broken** — list every difference, however small
+3. **Understand dependencies** — what config, environment, or state does the broken code assume?
+
+#### Phase 3: Form Hypothesis
+
+1. **State clearly**: "The root cause is X because Y" — be specific, not vague
+2. **Verify your hypothesis** against the evidence gathered in Phase 1 and 2
+3. If the evidence does not support your hypothesis, form a new one
+4. Only proceed to Step 3 when you have a hypothesis supported by evidence
 
 ### Step 3: Implement the fix
 
@@ -43,6 +81,10 @@ Use the Sentry MCP tools to retrieve:
 - DO:
   - Follow existing code patterns and conventions
   - Handle edge cases if the root cause reveals them
+- If fix doesn't work (tests fail after applying):
+  - Do NOT stack another fix on top
+  - Return to Step 2, re-analyze with the new information
+  - After 3 failed attempts, STOP and report as unfixable (Step 6)
 
 ### Step 4: Validate
 
