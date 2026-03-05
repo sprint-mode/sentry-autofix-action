@@ -1,16 +1,16 @@
 # Sentry Auto-Fix Action
 
-Automatically fix Sentry bugs with Claude Code. When a new error appears in Sentry, this action analyzes the stacktrace, diagnoses the root cause, implements a fix, and creates a PR — ready for human review.
+Automatically fix Sentry bugs with AI coding agents. When a new error appears in Sentry, this action analyzes the stacktrace, diagnoses the root cause, implements a fix, and creates a PR — ready for human review.
 
 ## How it works
 
 ```
-Sentry Error → GitHub Issue (auto) → Claude Code analyzes → PR created → Human reviews & merges
+Sentry Error → GitHub Issue (auto) → AI agent analyzes → PR created → Human reviews & merges
 ```
 
 1. **Sentry** detects a new error and creates a GitHub Issue (via native integration)
 2. **GitHub Actions** triggers this workflow
-3. **Claude Code** + **Sentry MCP** fetches error details, navigates your codebase, and implements a fix
+3. **Claude Code** or **OpenAI Codex** + **Sentry MCP** fetches error details, navigates your codebase, and implements a fix
 4. A **PR** is created with full diagnosis, fix description, and risk assessment
 5. A **human** reviews and merges
 
@@ -40,11 +40,15 @@ jobs:
       contains(github.event.issue.labels.*.name, 'sentry')
     uses: sprint-mode/sentry-autofix-action/.github/workflows/sentry-autofix.yml@main
     with:
+      provider: 'openai'  # or 'anthropic'
       sentry_issue_url: ${{ inputs.sentry_issue_url || '' }}
       severity_filter: 'fatal,error'
       base_branch: 'main'
+      openai_model: 'gpt-5.3-codex'
+      openai_effort: 'high'
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_AUTOFIX_WEBHOOK }}
 ````
@@ -53,7 +57,8 @@ jobs:
 
 | Secret | Required | Description |
 |--------|----------|-------------|
-| `ANTHROPIC_API_KEY` | Yes | Your Anthropic API key |
+| `ANTHROPIC_API_KEY` | If `provider=anthropic` | Your Anthropic API key |
+| `OPENAI_API_KEY` | If `provider=openai` | Your OpenAI API key |
 | `SENTRY_AUTH_TOKEN` | Yes | Sentry token with `project:read`, `event:read`, `issue:read` |
 | `SLACK_AUTOFIX_WEBHOOK` | No | Slack webhook for notifications |
 
@@ -65,10 +70,13 @@ Create a Sentry Alert Rule to auto-create GitHub Issues with label `sentry` for 
 
 | Input | Default | Description |
 |-------|---------|-------------|
+| `provider` | `anthropic` | LLM provider: `anthropic` or `openai` |
 | `severity_filter` | `fatal,error` | Severity levels to auto-fix |
-| `max_turns` | `30` | Max Claude conversation turns |
+| `max_turns` | `30` | Max agent conversation turns |
 | `base_branch` | `main` | Branch to create fix from |
-| `model` | `claude-sonnet-4-6-20250514` | Claude model |
+| `model` | `claude-sonnet-4-6-20250514` | Claude model (used when `provider=anthropic`) |
+| `openai_model` | `gpt-5.3-codex` | OpenAI Codex model (used when `provider=openai`) |
+| `openai_effort` | `high` | OpenAI reasoning effort: `low`, `medium`, `high`, `xhigh` |
 
 ## Manual trigger
 
@@ -110,11 +118,12 @@ Claude will:
 
 | Secret | Required | What it does | Cost |
 |--------|----------|-------------|------|
-| `ANTHROPIC_API_KEY` | Yes | Authenticates Claude Code with the Anthropic API | ~$0.50–$5 per auto-fix run |
-| `SENTRY_AUTH_TOKEN` | Yes | Lets Claude read your Sentry issues and stacktraces | Free (Sentry API) |
+| `ANTHROPIC_API_KEY` | If `provider=anthropic` | Authenticates Claude Code with the Anthropic API | Usage-based |
+| `OPENAI_API_KEY` | If `provider=openai` | Authenticates Codex with OpenAI API | Usage-based |
+| `SENTRY_AUTH_TOKEN` | Yes | Lets the agent read your Sentry issues and stacktraces | Free (Sentry API) |
 | `SLACK_AUTOFIX_WEBHOOK` | No | Sends Slack notifications when PRs are created | Free |
 
-Get your Anthropic API key at [console.anthropic.com](https://console.anthropic.com/) and your Sentry token at [sentry.io/settings/auth-tokens](https://sentry.io/settings/auth-tokens/) (scopes: `project:read`, `event:read`, `issue:read`).
+Get your Anthropic API key at [console.anthropic.com](https://console.anthropic.com/), your OpenAI API key at [platform.openai.com/api-keys](https://platform.openai.com/api-keys), and your Sentry token at [sentry.io/settings/auth-tokens](https://sentry.io/settings/auth-tokens/) (scopes: `project:read`, `event:read`, `issue:read`).
 
 ## Documentation
 

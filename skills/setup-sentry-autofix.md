@@ -1,22 +1,22 @@
 ---
 name: setup-sentry-autofix
-description: Set up Sentry auto-fix in the current repo. Creates the GitHub Actions workflow, configures required secrets (Anthropic API key, Sentry token), sets up Sentry alerts, and tests the full pipeline. Use when the user wants to connect Sentry error auto-healing to their repo.
+description: Set up Sentry auto-fix in the current repo. Creates the GitHub Actions workflow, configures required secrets (Anthropic/OpenAI API key, Sentry token), sets up Sentry alerts, and tests the full pipeline. Use when the user wants to connect Sentry error auto-healing to their repo.
 ---
 
 # Setup Sentry Auto-Fix
 
-You are setting up [sentry-autofix-action](https://github.com/sprint-mode/sentry-autofix-action) in the user's current repository. This action uses Claude Code + Sentry MCP to automatically analyze Sentry errors, diagnose root causes, implement fixes, and create PRs.
+You are setting up [sentry-autofix-action](https://github.com/sprint-mode/sentry-autofix-action) in the user's current repository. This action uses Claude Code or OpenAI Codex + Sentry MCP to automatically analyze Sentry errors, diagnose root causes, implement fixes, and create PRs.
 
 ## How it works
 
 ```
 Sentry Error → Sentry Alert creates GitHub Issue (label: sentry)
-  → GitHub Action triggers → Claude Code + Sentry MCP
+  → GitHub Action triggers → Claude Code or OpenAI Codex + Sentry MCP
   → Analyzes error, reads stacktrace, navigates code
   → Creates branch + fix + PR → Human reviews and merges
 ```
 
-Claude Code runs inside a GitHub Actions runner. It uses an **Anthropic API key** (paid, usage-based) to call the Claude API. Each auto-fix run costs approximately $0.50–$5 USD depending on bug complexity.
+The AI agent runs inside a GitHub Actions runner. Depending on provider, it uses an **Anthropic API key** or **OpenAI API key** (paid, usage-based). Each auto-fix run costs depend on model, token usage, and bug complexity.
 
 ## Setup Steps
 
@@ -67,12 +67,16 @@ jobs:
       contains(github.event.issue.labels.*.name, 'sentry')
     uses: sprint-mode/sentry-autofix-action/.github/workflows/sentry-autofix.yml@main
     with:
+      provider: 'anthropic'                # or 'openai'
       sentry_issue_url: ${{ inputs.sentry_issue_url || '' }}
       severity_filter: 'fatal,error'       # Only auto-fix errors and fatals (skip warnings/info)
       base_branch: 'main'                  # ← change if your default branch is different
       max_turns: 30                        # Increase for complex bugs (costs more)
+      openai_model: 'gpt-5.3-codex'        # Only used when provider=openai
+      openai_effort: 'high'                # Only used when provider=openai
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_AUTOFIX_WEBHOOK }}  # Optional
 ````
@@ -89,7 +93,7 @@ gh secret list
 
 The workflow needs these GitHub repo secrets:
 
-#### ANTHROPIC_API_KEY (required)
+#### ANTHROPIC_API_KEY (required if provider=anthropic)
 
 This is how Claude Code authenticates with the Anthropic API. It's a **paid API key** — each auto-fix run uses Claude API credits.
 
@@ -108,7 +112,22 @@ gh secret set ANTHROPIC_API_KEY
 pbpaste | gh secret set ANTHROPIC_API_KEY
 ```
 
-**Cost:** ~$0.50–$5 USD per auto-fix run. Model `claude-sonnet-4-6` is the default (good balance of quality/cost). You can change to `claude-opus-4-6` for harder bugs (more expensive) or `claude-haiku-4-5` for cheaper runs (less capable).
+**Cost:** Depends on model and token usage. For Anthropic, `claude-sonnet-4-6` is the default.
+
+#### OPENAI_API_KEY (required if provider=openai)
+
+This is how Codex authenticates with OpenAI when `provider: openai`.
+
+**How to get it:**
+1. Go to https://platform.openai.com/api-keys
+2. Sign in
+3. Create a new secret key
+4. Copy the key
+
+**How to set it:**
+```bash
+gh secret set OPENAI_API_KEY
+```
 
 #### SENTRY_AUTH_TOKEN (required)
 
@@ -144,7 +163,7 @@ After setting secrets, verify:
 gh secret list
 ```
 
-You should see at least `ANTHROPIC_API_KEY` and `SENTRY_AUTH_TOKEN` listed.
+You should see `SENTRY_AUTH_TOKEN` and at least one provider key (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`).
 
 ### Step 4: Verify Sentry-GitHub integration
 
@@ -214,10 +233,10 @@ gh run watch
 
 1. The Action checks out your code
 2. Claude Code + Sentry MCP fetches the error details from Sentry
-3. Claude analyzes the stacktrace, navigates your code, identifies root cause
-4. Claude creates a new branch `autofix/sentry-<id>`, implements the fix
-5. Claude runs relevant tests
-6. Claude creates a PR with diagnosis, fix description, and risk assessment
+3. The AI agent analyzes the stacktrace, navigates your code, identifies root cause
+4. The AI agent creates a new branch `autofix/sentry-<id>`, implements the fix
+5. The AI agent runs relevant tests
+6. The AI agent creates a PR with diagnosis, fix description, and risk assessment
 7. (Optional) Slack notification sent
 
 #### If it fails
@@ -225,7 +244,7 @@ gh run watch
 Common issues:
 - **"No Sentry issue URL found"** → The URL format wasn't recognized. Check it's a valid Sentry issue URL.
 - **"Could not load prompt template"** → Network issue fetching from GitHub. Try again.
-- **Claude can't access Sentry** → Check `SENTRY_AUTH_TOKEN` has correct scopes.
+- **AI agent can't access Sentry** → Check `SENTRY_AUTH_TOKEN` has correct scopes.
 - **Timeout** → Increase `max_turns` (default 30). Complex bugs may need 50+.
 
 ## Configuration options
@@ -234,7 +253,10 @@ These go in the `with:` section of the consumer workflow:
 
 | Input | Default | Description |
 |-------|---------|-------------|
+| `provider` | `anthropic` | LLM provider: `anthropic` or `openai`. |
 | `severity_filter` | `fatal,error` | Comma-separated. Which Sentry severity levels to auto-fix. |
-| `max_turns` | `30` | Max Claude conversation turns. Higher = more complex bugs, more cost. |
+| `max_turns` | `30` | Max agent conversation turns. Higher = more complex bugs, more cost. |
 | `base_branch` | `main` | Branch to create fix branch from. |
-| `model` | `claude-sonnet-4-6-20250514` | Claude model. Options: `claude-opus-4-6` (best, expensive), `claude-sonnet-4-6` (balanced), `claude-haiku-4-5` (cheap, less capable). |
+| `model` | `claude-sonnet-4-6-20250514` | Claude model (used when `provider=anthropic`). |
+| `openai_model` | `gpt-5.3-codex` | OpenAI Codex model (used when `provider=openai`). |
+| `openai_effort` | `high` | OpenAI reasoning effort (used when `provider=openai`). |

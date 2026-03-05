@@ -6,7 +6,7 @@ Get Sentry auto-fix running in your repo in 5 minutes.
 
 - A GitHub repo with a Sentry project tracking its errors
 - [Sentry-GitHub integration](https://sentry.io/integrations/github/) installed
-- An [Anthropic API key](https://console.anthropic.com/)
+- An [Anthropic API key](https://console.anthropic.com/) or [OpenAI API key](https://platform.openai.com/api-keys)
 - A [Sentry Auth Token](https://sentry.io/settings/auth-tokens/) with scopes: `project:read`, `event:read`, `issue:read`
 
 ## Step 1: Add the workflow
@@ -35,11 +35,15 @@ jobs:
       contains(github.event.issue.labels.*.name, 'sentry')
     uses: sprint-mode/sentry-autofix-action/.github/workflows/sentry-autofix.yml@main
     with:
+      provider: 'openai'  # or 'anthropic'
       sentry_issue_url: ${{ inputs.sentry_issue_url || '' }}
       severity_filter: 'fatal,error'
       base_branch: 'main'
+      openai_model: 'gpt-5.3-codex'
+      openai_effort: 'high'
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_AUTOFIX_WEBHOOK }}
 ````
@@ -50,7 +54,8 @@ Go to your repo > Settings > Secrets and variables > Actions:
 
 | Secret | Required | Source |
 |--------|----------|--------|
-| `ANTHROPIC_API_KEY` | Yes | [Anthropic Console](https://console.anthropic.com/) |
+| `ANTHROPIC_API_KEY` | If `provider=anthropic` | [Anthropic Console](https://console.anthropic.com/) |
+| `OPENAI_API_KEY` | If `provider=openai` | [OpenAI API Keys](https://platform.openai.com/api-keys) |
 | `SENTRY_AUTH_TOKEN` | Yes | [Sentry Auth Tokens](https://sentry.io/settings/auth-tokens/) — scopes: `project:read`, `event:read`, `issue:read` |
 | `SLACK_AUTOFIX_WEBHOOK` | No | Slack App > Incoming Webhooks |
 
@@ -75,7 +80,10 @@ See [Sentry Alert Setup](sentry-alert-setup.md) for creating the alert rule that
 
 | Input | Default | Description |
 |-------|---------|-------------|
+| `provider` | `anthropic` | LLM provider: `anthropic` or `openai` |
 | `severity_filter` | `fatal,error` | Comma-separated severity levels to auto-fix |
-| `max_turns` | `30` | Max Claude conversation turns |
+| `max_turns` | `30` | Max agent conversation turns |
 | `base_branch` | `main` | Branch to create fix from |
-| `model` | `claude-sonnet-4-6-20250514` | Claude model to use |
+| `model` | `claude-sonnet-4-6-20250514` | Claude model (used when `provider=anthropic`) |
+| `openai_model` | `gpt-5.3-codex` | OpenAI Codex model (used when `provider=openai`) |
+| `openai_effort` | `high` | OpenAI reasoning effort: `low`, `medium`, `high`, `xhigh` |

@@ -3,6 +3,11 @@ name: Sentry Auto-Fix
 on:
   workflow_call:
     inputs:
+      provider:
+        description: 'LLM provider to run auto-fix (anthropic or openai)'
+        required: false
+        type: string
+        default: 'anthropic'
       sentry_issue_url:
         description: 'Sentry issue URL (for manual/workflow_dispatch trigger)'
         required: false
@@ -14,7 +19,7 @@ on:
         type: string
         default: 'fatal,error'
       max_turns:
-        description: 'Max Claude conversation turns (higher = more complex fixes)'
+        description: 'Max agent conversation turns (higher = more complex fixes)'
         required: false
         type: number
         default: 30
@@ -28,9 +33,21 @@ on:
         required: false
         type: string
         default: 'claude-sonnet-4-6-20250514'
+      openai_model:
+        description: 'OpenAI Codex model to use when provider=openai'
+        required: false
+        type: string
+        default: 'gpt-5.3-codex'
+      openai_effort:
+        description: 'Reasoning effort when provider=openai (low,medium,high,xhigh)'
+        required: false
+        type: string
+        default: 'high'
     secrets:
       ANTHROPIC_API_KEY:
-        required: true
+        required: false
+      OPENAI_API_KEY:
+        required: false
       SENTRY_AUTH_TOKEN:
         required: true
       SLACK_WEBHOOK_URL:
@@ -129,7 +146,29 @@ jobs:
             echo "PROMPT_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Validate provider and required API key
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ "$PROVIDER" != "anthropic" ] && [ "$PROVIDER" != "openai" ]; then
+            echo "::error::Invalid provider '$PROVIDER'. Use 'anthropic' or 'openai'."
+            exit 1
+          fi
+
+          if [ "$PROVIDER" = "anthropic" ] && [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY is required when provider=anthropic."
+            exit 1
+          fi
+
+          if [ "$PROVIDER" = "openai" ] && [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::OPENAI_API_KEY is required when provider=openai."
+            exit 1
+          fi
+
       - name: Run Claude Auto-Fix
+        if: ${{ inputs.provider == 'anthropic' }}
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
@@ -139,6 +178,21 @@ jobs:
             --mcp-config /tmp/mcp-config.json
             --max-turns ${{ inputs.max_turns }}
             --model ${{ inputs.model }}
+
+      - name: Run Codex Auto-Fix
+        if: ${{ inputs.provider == 'openai' }}
+        id: codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt: ${{ steps.prompt.outputs.content }}
+          model: ${{ inputs.openai_model }}
+          effort: ${{ inputs.openai_effort }}
+          sandbox: danger-full-access
+          safety-strategy: drop-sudo
+          codex-args: >
+            --mcp-config /tmp/mcp-config.json
+            --max-turns ${{ inputs.max_turns }}
 
       - name: Notify Slack
         if: always() && env.SLACK_WEBHOOK_URL != ''

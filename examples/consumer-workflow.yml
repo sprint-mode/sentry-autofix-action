@@ -3,7 +3,10 @@
 # Prerequisites:
 #   1. Set up Sentry-GitHub integration (https://sentry.io/integrations/github/)
 #   2. Create a Sentry Alert Rule that creates GitHub Issues with label "sentry"
-#   3. Add repo secrets: ANTHROPIC_API_KEY, SENTRY_AUTH_TOKEN
+#   3. Add repo secrets:
+#      - ANTHROPIC_API_KEY (if provider=anthropic)
+#      - OPENAI_API_KEY (if provider=openai)
+#      - SENTRY_AUTH_TOKEN (always)
 #   4. (Optional) Add SLACK_AUTOFIX_WEBHOOK secret for Slack notifications
 #
 # Triggers:
@@ -29,10 +32,14 @@ jobs:
       contains(github.event.issue.labels.*.name, 'sentry')
     uses: sprint-mode/sentry-autofix-action/.github/workflows/sentry-autofix.yml@main
     with:
+      provider: 'openai'
       sentry_issue_url: ${{ inputs.sentry_issue_url || '' }}
       severity_filter: 'fatal,error'
       base_branch: 'main'
+      openai_model: 'gpt-5.3-codex'
+      openai_effort: 'high'
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_AUTOFIX_WEBHOOK }}
